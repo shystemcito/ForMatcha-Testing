@@ -3,7 +3,7 @@
 -- Designed for Matcha external executor overlay rendering
 -- No tweens, no heavy animations. Pure Drawing API.
 
-print("Testing To-do 1-1.1.0")
+print("Testing To-do 1-1.1.1")
 local MatchaUI = {}
 MatchaUI.__index = MatchaUI
 
@@ -1582,7 +1582,7 @@ local NOTIF_CHAR_W  = 7
 
 -- Notifications spawn at top-left (50, 50) and stack downward.
 local NOTIF_START_X = 50
-local NOTIF_START_Y = 50
+local NOTIF_START_Y = 150
 
 -- Word-wrap a string to fit within maxChars per line.
 -- Returns a table of line strings and the total line count.
