@@ -3,7 +3,7 @@
 -- Designed for Matcha external executor overlay rendering
 -- No tweens, no heavy animations. Pure Drawing API.
 
-print("Testing To-do 1-1.0.1")
+print("Testing To-do 1-1.1.0")
 local MatchaUI = {}
 MatchaUI.__index = MatchaUI
 
@@ -1868,6 +1868,11 @@ function MatchaUI.Run()
             end
 
             -- ── Per-window processing
+            -- Snapshot Choosing ONCE before any element mutates it this frame.
+            -- This prevents a dropdown close (Choosing→false) mid-loop from
+            -- accidentally allowing other elements to react on the same click.
+            local _choosingThisFrame = MatchaUI.Choosing
+
             for _, win in ipairs(_windows) do
                 if not win.Visible then continue end
 
@@ -1974,14 +1979,14 @@ function MatchaUI.Run()
                     end
 
                     -- BUTTON (disabled while a dropdown is open)
-                    if elem.Type == "Button" and _mouseJustDown and not MatchaUI.Choosing then
+                    if elem.Type == "Button" and _mouseJustDown and not _choosingThisFrame then
                         if inBounds(mPos.X, mPos.Y, elem._x, elem._y, elem._w, elem._h) then
                             if elem.Callback then pcall(elem.Callback) end
                         end
                     end
 
                     -- TOGGLE (disabled while a dropdown is open)
-                    if elem.Type == "Toggle" and _mouseJustDown and not MatchaUI.Choosing then
+                    if elem.Type == "Toggle" and _mouseJustDown and not _choosingThisFrame then
                         if inBounds(mPos.X, mPos.Y, elem._tx, elem._ty, elem._trackW, elem._trackH) then
                             elem.State = not elem.State
                             elem._track.Color = elem.State and Theme.AccentOn or Theme.AccentOff
@@ -1994,7 +1999,7 @@ function MatchaUI.Run()
                     end
 
                     -- CHECKBOX (disabled while a dropdown is open)
-                    if elem.Type == "Checkbox" and _mouseJustDown and not MatchaUI.Choosing then
+                    if elem.Type == "Checkbox" and _mouseJustDown and not _choosingThisFrame then
                         if inBounds(mPos.X, mPos.Y, elem._x, elem._y, elem._w, elem._h) then
                             elem.State = not elem.State
                             elem._check.Visible = elem.State
@@ -2003,7 +2008,7 @@ function MatchaUI.Run()
                     end
 
                     -- SLIDER drag start (disabled while a dropdown is open)
-                    if elem.Type == "Slider" and _mouseJustDown and _sliderDrag == nil and not MatchaUI.Choosing then
+                    if elem.Type == "Slider" and _mouseJustDown and _sliderDrag == nil and not _choosingThisFrame then
                         -- click on track or knob
                         if inBounds(mPos.X, mPos.Y, elem._trackX, elem._trackY - 6, elem._trackW, 16) then
                             _sliderDrag = elem
@@ -2071,7 +2076,7 @@ function MatchaUI.Run()
                     -- KEYBIND
                     if elem.Type == "Keybind" then
                         -- Arm on mouse down; only start scanning after mouse is released
-                        if _mouseJustDown and not MatchaUI.Choosing and inBounds(mPos.X, mPos.Y, elem._x, elem._y, elem._w, elem._h) then
+                        if _mouseJustDown and not _choosingThisFrame and inBounds(mPos.X, mPos.Y, elem._x, elem._y, elem._w, elem._h) then
                             elem._pendingListen = true
                             elem.Listening = false
                             elem._kbTxt.Text  = "..."
@@ -2100,22 +2105,38 @@ function MatchaUI.Run()
                     end
 
                     -- TEXT INPUT / SEARCH BAR
-                    if elem.Type == "TextInput" and _mouseJustDown then
-                        if not MatchaUI.Choosing and inBounds(mPos.X, mPos.Y, elem._x, elem._y, elem._w, elem._h) then
-                            -- Focus: only when Choosing is false and click is inside the box
-                            if _focusedInput ~= elem then
-                                _focusedInput = elem
-                                elem.Focused  = true
-                                _cursorBlink  = 0
-                                if elem._inputBg then elem._inputBg.Color = Theme.InputBg end
-                                setrobloxinput(false)  -- disable Roblox input while typing
+                    -- Focus is set on _mouseJustDown (for responsiveness).
+                    -- setrobloxinput(false) is deferred to _mouseJustUp so it takes effect
+                    -- AFTER the click that initiated focus is fully released — calling it
+                    -- mid-mousedown causes Matcha to ignore it for the current press.
+                    if elem.Type == "TextInput" then
+                        if _mouseJustDown and not _choosingThisFrame then
+                            if inBounds(mPos.X, mPos.Y, elem._x, elem._y, elem._w, elem._h) then
+                                -- Clicked inside this input: focus it
+                                if _focusedInput ~= elem then
+                                    -- Blur the previously focused input first
+                                    if _focusedInput then
+                                        _focusedInput.Focused = false
+                                        if _focusedInput._cursor then _focusedInput._cursor.Visible = false end
+                                    end
+                                    _focusedInput = elem
+                                    elem.Focused  = true
+                                    _cursorBlink  = 0
+                                    if elem._inputBg then elem._inputBg.Color = Theme.InputBg end
+                                    -- setrobloxinput(false) deferred to _mouseJustUp below
+                                end
+                            elseif elem == _focusedInput then
+                                -- Clicked outside a currently-focused input: blur it
+                                _focusedInput = nil
+                                elem.Focused  = false
+                                if elem._cursor then elem._cursor.Visible = false end
+                                setrobloxinput(true)
                             end
-                        elseif not MatchaUI.Choosing and elem == _focusedInput then
-                            -- Blur: only when Choosing is false and click is outside a currently-focused box
-                            _focusedInput = nil
-                            elem.Focused  = false
-                            if elem._cursor then elem._cursor.Visible = false end
-                            setrobloxinput(true)  -- restore Roblox input on blur
+                        end
+                        -- Deferred setrobloxinput(false): fires on mouse-release of the
+                        -- click that focused this input, so Matcha honours it correctly.
+                        if _mouseJustUp and elem == _focusedInput then
+                            setrobloxinput(false)
                         end
                     end
 
