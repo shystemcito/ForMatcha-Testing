@@ -3,7 +3,7 @@
 -- Designed for Matcha external executor overlay rendering
 -- No tweens, no heavy animations. Pure Drawing API.
 
-print("Testing To-do 1-1.0.0")
+print("Testing To-do 1-1.0.1")
 local MatchaUI = {}
 MatchaUI.__index = MatchaUI
 
@@ -1973,8 +1973,8 @@ function MatchaUI.Run()
                         if not inFrame then continue end
                     end
 
-                    -- BUTTON
-                    if elem.Type == "Button" and _mouseJustDown then
+                    -- BUTTON (disabled while a dropdown is open)
+                    if elem.Type == "Button" and _mouseJustDown and not MatchaUI.Choosing then
                         if inBounds(mPos.X, mPos.Y, elem._x, elem._y, elem._w, elem._h) then
                             if elem.Callback then pcall(elem.Callback) end
                         end
@@ -2099,21 +2099,23 @@ function MatchaUI.Run()
                         end
                     end
 
-                    -- TEXT INPUT / SEARCH BAR: focus on click (disabled while a dropdown is open)
-                    if (elem.Type == "TextInput") and _mouseJustDown and not MatchaUI.Choosing then
-                        if inBounds(mPos.X, mPos.Y, elem._x, elem._y, elem._w, elem._h) then
-                            _focusedInput = elem
-                            elem.Focused   = true
-                            _cursorBlink   = 0
-                            if elem._inputBg then elem._inputBg.Color = Theme.InputBg end
-                            setrobloxinput(false)  -- disable Roblox input while typing
-                        else
-                            if elem == _focusedInput then
-                                _focusedInput = nil
-                                elem.Focused  = false
-                                if elem._cursor then elem._cursor.Visible = false end
-                                setrobloxinput(true)  -- restore Roblox input on blur
+                    -- TEXT INPUT / SEARCH BAR
+                    if elem.Type == "TextInput" and _mouseJustDown then
+                        if not MatchaUI.Choosing and inBounds(mPos.X, mPos.Y, elem._x, elem._y, elem._w, elem._h) then
+                            -- Focus: only when Choosing is false and click is inside the box
+                            if _focusedInput ~= elem then
+                                _focusedInput = elem
+                                elem.Focused  = true
+                                _cursorBlink  = 0
+                                if elem._inputBg then elem._inputBg.Color = Theme.InputBg end
+                                setrobloxinput(false)  -- disable Roblox input while typing
                             end
+                        elseif not MatchaUI.Choosing and elem == _focusedInput then
+                            -- Blur: only when Choosing is false and click is outside a currently-focused box
+                            _focusedInput = nil
+                            elem.Focused  = false
+                            if elem._cursor then elem._cursor.Visible = false end
+                            setrobloxinput(true)  -- restore Roblox input on blur
                         end
                     end
 
