@@ -3,7 +3,7 @@
 -- Designed for Matcha external executor overlay rendering
 -- No tweens, no heavy animations. Pure Drawing API.
 
-print("Testing To-do 2-1.1.0")
+print("Testing To-do 2-1.1.1")
 local MatchaUI = {}
 MatchaUI.__index = MatchaUI
 
@@ -1478,23 +1478,27 @@ function MatchaUI.CreateWindow(opts)
                 builtElem._origHeaderY = builtElem._headerY  -- absolute Y when scrollY=0
 
                 -- Also patch btnObjs and channelSliders Y by dyFix.
-                -- CRITICAL: _origKnobDY / _origDY are relative offsets from panelY used by the
-                -- open-panel logic to SET knob coords absolutely. They were computed in
-                -- addColorPicker BEFORE AddWidget applied dyFix, so they must be patched here too.
-                -- Without this patch, opening the panel after a window drag produces a Y offset
-                -- equal to dyFix (the distance the widget sits below the ScrollFrame top).
+                -- BUG FIX: Widget ColorPicker Slider Offset
+                -- _orig* offsets (e.g. _origKnobDY, _origDY, _origTrackDX) are relative to
+                -- panelY AT BUILD TIME. When the panel opens, the logic sets absolute positions
+                -- using:  newPanelY + _origKnobDY
+                -- where   newPanelY = bgPos.Y  (the header's current screen Y).
+                -- Since AddWidget already shifts elem._bg by dyFix, bgPos.Y = cy + dyFix,
+                -- which correctly captures the widget's offset from the frame top.
+                -- Therefore _orig* values must NOT be modified by dyFix here — doing so would
+                -- cause a double-offset: (cy + dyFix) + (origOffset + dyFix) = correct + dyFix.
+                -- The same logic applies to all _origDY, _origKnobDY, _origTrackDX, _origRowDY.
+                -- We still patch the runtime _y/_knobY/_rowY for hit-testing before first open.
                 for _, btn in ipairs(builtElem._btnObjs or {}) do
                     if btn._y      then btn._y      = btn._y      + dyFix end
                     if btn._knobY  then btn._knobY  = btn._knobY  + dyFix end
-                    if btn._origDY    then btn._origDY    = btn._origDY    + dyFix end
-                    if btn._origKnobDY then btn._origKnobDY = btn._origKnobDY + dyFix end
+                    -- _origDY / _origKnobDY / _origTrackDX intentionally NOT patched — see above.
                 end
                 local cs = builtElem._channelSliders or {}
                 for _, s in pairs(cs) do
                     if s._knobY      then s._knobY      = s._knobY      + dyFix end
                     if s._rowY       then s._rowY       = s._rowY       + dyFix end
-                    if s._origKnobDY then s._origKnobDY = s._origKnobDY + dyFix end
-                    if s._origRowDY  then s._origRowDY  = s._origRowDY  + dyFix end
+                    -- _origKnobDY / _origRowDY intentionally NOT patched — see above.
                 end
             end
 
@@ -1763,6 +1767,9 @@ function MatchaUI.AddConfigPreset(win, opts)
         AccentHex       = "#39FF14",
         Font            = "Monospace",
         ThemePreset     = "Default",
+        -- ThemeColors: persisted per-key hex strings, written on every SetThemeColor call
+        -- from the Theme Key picker. On startup these override the preset's colors.
+        ThemeColors     = {},
     }
 
     -- ── Live state (written to disk on every change) ───────────
@@ -1771,6 +1778,7 @@ function MatchaUI.AddConfigPreset(win, opts)
         AccentHex       = DEFAULT.AccentHex,
         Font            = DEFAULT.Font,
         ThemePreset     = DEFAULT.ThemePreset,
+        ThemeColors     = {},  -- { [key] = "#RRGGBB" }
     }
 
     -- ── Persist ───────────────────────────────────────────────
@@ -1807,13 +1815,21 @@ function MatchaUI.AddConfigPreset(win, opts)
         return names
     end
 
-    local function saveCustomTheme(name, accentHex, presetName)
+    -- saveCustomTheme now saves the live ThemeColors (all individually-edited slot colors)
+    -- plus the accent hex, so the custom theme file is a complete snapshot of the UI state.
+    local function saveCustomTheme(name, accentHex, themeColors)
         if not isfolder(THEMES_DIR) then pcall(makefolder, THEMES_DIR) end
-        local base = builtinPresets[presetName]
-        local out  = { accentHex = accentHex }
+        local out = { accentHex = accentHex }
+        -- Persist every theme slot. If the user has picked a color for a slot via the
+        -- Theme Key picker, use that; otherwise fall back to the live Theme table default.
         for _, k in ipairs(THEME_SLOT_KEYS) do
-            local c = base and base[k]
-            out[k] = c and c3hex(c) or "#000000"
+            if themeColors and themeColors[k] then
+                out[k] = themeColors[k]
+            else
+                -- Read live color from Theme table as fallback
+                local liveColor = Theme and Theme[k]
+                out[k] = liveColor and c3hex(liveColor) or "#000000"
+            end
         end
         pcall(function()
             local HttpService = game:GetService("HttpService")
@@ -1855,8 +1871,18 @@ function MatchaUI.AddConfigPreset(win, opts)
         return true
     end
 
+    -- Widget handles populated after the category is built — used by applyConfig.
+    -- Forward-declared so applyConfig can reference them whether called early or late.
+    local kbWidget   = nil   -- Keybind widget in Config cat
+    local cpAccent   = nil   -- Accent ColorPicker widget in Config cat
+    local ddFont     = nil   -- Font dropdown widget in Config cat
+    local ddPreset   = nil   -- Preset dropdown widget in Config cat
+    local cpThemeKey = nil   -- Theme Key ColorPicker widget in Config cat
+    local ddThemeKey = nil   -- Theme Key dropdown widget in Config cat
+
     -- ── Load saved config and push to live UI ──────────────────
-    -- Also syncs the keybind handle's .Key and its display text.
+    -- Also syncs all Config-category widget display states so the
+    -- UI looks correct immediately on startup without user interaction.
     local function applyConfig(cfg)
         -- 1. Preset / custom theme
         local pname = cfg.ThemePreset or DEFAULT.ThemePreset
@@ -1864,21 +1890,69 @@ function MatchaUI.AddConfigPreset(win, opts)
             local data = loadCustomTheme(pname)
             if data then applyCustomData(data) end
         end
-        -- 2. Accent (overrides preset accent)
+        -- 2. Per-slot ThemeColors (individual overrides saved by the Theme Key picker).
+        --    These are applied ON TOP of the preset so manual edits persist across restarts.
+        local tc = cfg.ThemeColors or {}
+        for _, k in ipairs(THEME_SLOT_KEYS) do
+            if tc[k] then
+                MatchaUI.SetThemeColor(k, hex3c(tc[k]))
+            end
+        end
+        -- 3. Accent (overrides preset accent)
         if cfg.AccentHex then
             MatchaUI.SetAccentColor(hex3c(cfg.AccentHex))
         end
-        -- 3. Font
+        -- 4. Font
         if cfg.Font then
             MatchaUI.SetFont(cfg.Font)
         end
-        -- 4. Keybind handle + display text
+        -- 5. Keybind handle + display text (external handle passed via opts)
         if cfg.ToggleKeybindVK and kbHandle then
             kbHandle.Key = cfg.ToggleKeybindVK
-            local name = KeyNames[cfg.ToggleKeybindVK]
+            local kname = KeyNames[cfg.ToggleKeybindVK]
                 or ("VK"..tostring(cfg.ToggleKeybindVK))
             if kbHandle._kbTxt then
-                kbHandle._kbTxt.Text = "[ "..name.." ]"
+                kbHandle._kbTxt.Text = "[ "..kname.." ]"
+            end
+        end
+        -- 6. Sync Config-category widget visuals so they reflect the loaded state.
+        --    These widgets are nil during the first applyConfig call (before the category
+        --    is built), so guard each access. A second call from ── Auto-load ── below
+        --    fires after the widgets exist and restores all display states.
+        -- 6a. Keybind widget text
+        if kbWidget and cfg.ToggleKeybindVK then
+            local kname = KeyNames[cfg.ToggleKeybindVK]
+                or ("VK"..tostring(cfg.ToggleKeybindVK))
+            if kbWidget._kbTxt then
+                kbWidget._kbTxt.Text = "[ "..kname.." ]"
+            end
+            kbWidget.Key = cfg.ToggleKeybindVK
+        end
+        -- 6b. Accent ColorPicker preview swatch
+        if cpAccent and cfg.AccentHex then
+            cpAccent.Color   = hex3c(cfg.AccentHex)
+            cpAccent._preview.Color = cpAccent.Color
+            if cpAccent._prevPatch then cpAccent._prevPatch.Color = cpAccent.Color end
+        end
+        -- 6c. Font dropdown selected text
+        if ddFont and cfg.Font then
+            ddFont.Selected   = cfg.Font
+            if ddFont._selTxt then ddFont._selTxt.Text = cfg.Font end
+        end
+        -- 6d. Preset dropdown selected text
+        if ddPreset and cfg.ThemePreset then
+            ddPreset.Selected = cfg.ThemePreset
+            if ddPreset._selTxt then ddPreset._selTxt.Text = cfg.ThemePreset end
+        end
+        -- 6e. Theme Key ColorPicker: update its preview to match the currently selected key's color.
+        --     The actual color is whatever the live Theme table has after step 2+3 above.
+        if cpThemeKey and ddThemeKey then
+            local selKey = ddThemeKey.Selected or THEME_SLOT_KEYS[1]
+            local liveColor = Theme and Theme[selKey]
+            if liveColor then
+                cpThemeKey.Color = liveColor
+                if cpThemeKey._preview  then cpThemeKey._preview.Color  = liveColor end
+                if cpThemeKey._prevPatch then cpThemeKey._prevPatch.Color = liveColor end
             end
         end
     end
@@ -1899,7 +1973,7 @@ function MatchaUI.AddConfigPreset(win, opts)
 
     -- Section: Toggle Keybind
     win.AddSection(cat, "Toggle UI Keybind")
-    local kbWidget = win.AddKeybind(cat, "Toggle Keybind",
+    kbWidget = win.AddKeybind(cat, "Toggle Keybind",
         _cfg.ToggleKeybindVK, function(key, name)
             if kbHandle then
                 kbHandle.Key = key
@@ -1910,11 +1984,11 @@ function MatchaUI.AddConfigPreset(win, opts)
             _cfg.ToggleKeybindVK = key
             saveConfig()
         end)
-    win.AddTooltip(kbWidget, "Auto-saved. Also syncs the live Toggle keybind in Category 7.")
+    win.AddTooltip(kbWidget, "Auto-saved. Also syncs the live Toggle keybind.")
 
     -- Section: Accent Color
     win.AddSection(cat, "Accent Color")
-    local cpAccent = win.AddColorPicker(cat, "Accent Color",
+    cpAccent = win.AddColorPicker(cat, "Accent Color",
         hex3c(_cfg.AccentHex), function(color)
             MatchaUI.SetAccentColor(color)
             _cfg.AccentHex = c3hex(color)
@@ -1922,10 +1996,47 @@ function MatchaUI.AddConfigPreset(win, opts)
         end)
     win.AddTooltip(cpAccent, "Auto-saved. Applied on top of the active preset.")
 
+    -- Section: Theme Key
+    -- Mirrors the ExampleUsage Theme Editor workflow: pick a Theme slot from the
+    -- dropdown, then open the ColorPicker to change that slot's color live.
+    -- Every change is persisted in _cfg.ThemeColors so it survives a restart.
+    win.AddSection(cat, "Theme Key Color")
+    local _selectedThemeKey = THEME_SLOT_KEYS[1]
+    ddThemeKey = win.AddDropdown(cat, "Theme Key",
+        THEME_SLOT_KEYS,
+        THEME_SLOT_KEYS[1],
+        function(sel)
+            _selectedThemeKey = sel
+            -- Update the color picker preview to reflect the live color of this slot
+            local liveColor = Theme and Theme[sel]
+            if liveColor and cpThemeKey then
+                cpThemeKey.Color = liveColor
+                if cpThemeKey._preview  then cpThemeKey._preview.Color  = liveColor end
+                if cpThemeKey._prevPatch then cpThemeKey._prevPatch.Color = liveColor end
+                -- Sync the channel sliders if the panel is currently open
+                if cpThemeKey._cpOpen then
+                    cpThemeKey._refreshAll()
+                end
+            end
+        end)
+    win.AddTooltip(ddThemeKey, "Choose which Theme color slot to edit, then pick a color below.")
+
+    cpThemeKey = win.AddColorPicker(cat, "New Color",
+        hex3c(_cfg.ThemeColors[THEME_SLOT_KEYS[1]] or "#141414"),
+        function(color)
+            MatchaUI.SetThemeColor(_selectedThemeKey, color)
+            _cfg.ThemeColors[_selectedThemeKey] = c3hex(color)
+            saveConfig()
+            MatchaUI.Notify("Theme: ".._selectedThemeKey,
+                string.format("RGB(%d,%d,%d)",
+                    math.floor(color.R*255), math.floor(color.G*255), math.floor(color.B*255)), 2)
+        end)
+    win.AddTooltip(cpThemeKey, "Opens the color picker. Chosen color is applied to the selected Theme key instantly and auto-saved.")
+
     -- Section: Font
     win.AddSection(cat, "Font")
     local FONT_LIST = {"UI","System","SystemBold","Minecraft","Monospace","Pixel","Fortnite"}
-    local ddFont = win.AddDropdown(cat, "Global Font",
+    ddFont = win.AddDropdown(cat, "Global Font",
         FONT_LIST, _cfg.Font or "Monospace", function(sel)
             MatchaUI.SetFont(sel)
             _cfg.Font = sel
@@ -1936,14 +2047,18 @@ function MatchaUI.AddConfigPreset(win, opts)
     -- Section: Preset
     win.AddSection(cat, "Preset")
     local presetList = buildPresetList()
-    local ddPreset = win.AddDropdown(cat, "Load Preset",
+    ddPreset = win.AddDropdown(cat, "Load Preset",
         #presetList > 0 and presetList or {"(none)"},
         _cfg.ThemePreset or (presetList[1] or "(none)"),
         function(sel)
             if builtinPresets[sel] then
                 applyBuiltinPreset(sel)
-                -- Re-apply saved accent over preset
+                -- Re-apply saved accent + individual theme key overrides over the preset
                 MatchaUI.SetAccentColor(hex3c(_cfg.AccentHex))
+                local tc = _cfg.ThemeColors or {}
+                for _, k in ipairs(THEME_SLOT_KEYS) do
+                    if tc[k] then MatchaUI.SetThemeColor(k, hex3c(tc[k])) end
+                end
             else
                 local data = loadCustomTheme(sel)
                 if data then
@@ -1973,15 +2088,19 @@ function MatchaUI.AddConfigPreset(win, opts)
             MatchaUI.Notify("Save Theme", "Enter a name first.", 2)
             return
         end
-        saveCustomTheme(name, _cfg.AccentHex, _cfg.ThemePreset)
+        -- Save a complete snapshot: accent + all individual ThemeColor overrides
+        saveCustomTheme(name, _cfg.AccentHex, _cfg.ThemeColors)
         MatchaUI.Notify("Theme saved", name..".json in "..THEMES_DIR, 3)
     end)
     win.AddTooltip(btnSave,
-        "Saves current preset colors + accent. Reload the script to see it in the dropdown.")
+        "Saves current accent + all Theme Key edits as a reloadable theme file.")
 
     -- ── Auto-load from disk right now ─────────────────────────
+    -- All Config-category widgets are now built, so applyConfig can sync their displays.
     local saved = readConfig()
     for k, v in pairs(saved) do _cfg[k] = v end
+    -- Ensure ThemeColors sub-table is always present (old config files may lack it)
+    if type(_cfg.ThemeColors) ~= "table" then _cfg.ThemeColors = {} end
     applyConfig(_cfg)
 
     return cat
