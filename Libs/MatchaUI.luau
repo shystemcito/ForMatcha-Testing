@@ -3,7 +3,7 @@
 -- Designed for Matcha external executor overlay rendering
 -- No tweens, no heavy animations. Pure Drawing API.
 
-print("Testing To-do 1-1.1.1")
+print("Testing To-do 2-1.0.0")
 local MatchaUI = {}
 MatchaUI.__index = MatchaUI
 
@@ -1228,6 +1228,27 @@ function MatchaUI.CreateWindow(opts)
             _elemRef.Color = elem.Color
             refreshAll()
         end
+
+        -- BUG FIX (Widget ColorPicker Slider Offset):
+        -- _origKnobDY / _origTrackDX / _origRowDY are relative offsets from panelY/panelX at
+        -- build time. The open-panel logic uses these to SET hit-test coords absolutely
+        -- (avoiding drift when the window is dragged before the panel is first opened).
+        -- Previously these fields were only populated inside AddWidget. For standard (non-scroll)
+        -- ColorPickers they were nil, so reposition() accumulated deltas into _knobY unchecked,
+        -- and the open logic skipped the absolute-SET branch — leaving _knobY wrong by exactly
+        -- the distance the window had been dragged. Setting them here for ALL pickers fixes the bug.
+        for _, s in pairs(channelSliders) do
+            if s._trackX then s._origTrackDX = s._trackX - panelX end
+            if s._knobY  then s._origKnobDY  = s._knobY  - panelY end
+            if s._rowY   then s._origRowDY   = s._rowY   - panelY end
+        end
+        for _, btn in ipairs(btnObjs) do
+            if btn._x      then btn._origDX       = btn._x      - panelX end
+            if btn._y      then btn._origDY       = btn._y      - panelY end
+            if btn._trackX then btn._origTrackDX  = btn._trackX - panelX end
+            if btn._knobY  then btn._origKnobDY   = btn._knobY  - panelY end
+        end
+
         registerElemDesc(cat, elem)
         return elem
     end
