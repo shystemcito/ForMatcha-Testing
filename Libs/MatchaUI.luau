@@ -3,7 +3,7 @@
 -- Designed for Matcha external executor overlay rendering
 -- No tweens, no heavy animations. Pure Drawing API.
 
-print("Testing To-do 2-1.1.2")
+print("Testing To-do 2-1.1.3")
 local MatchaUI = {}
 MatchaUI.__index = MatchaUI
 
@@ -2841,22 +2841,20 @@ function MatchaUI.Run()
                                     local origBase = wElem._origHeaderY
                                     local scrollDelta = absHeaderY - origBase
 
+                                    -- FIX: Derive hit-test coords from panel-relative offsets (_origDY,
+                                    -- _origKnobDY, _origRowDY) plus the current header absolute Y
+                                    -- (baseAbsY). This avoids the lazy-init corruption where _origY
+                                    -- was captured from btn._y AFTER a window drag had already shifted
+                                    -- it, causing a permanent Y offset equal to the drag distance.
                                     for _, btn in ipairs(wElem._btnObjs or {}) do
-                                        -- btn._y and _knobY were patched to post-dyFix absolute coords.
-                                        -- We need to keep them at origBase + their offset + scrollDelta.
-                                        -- Since we stored them post-dyFix, we can derive original offset:
-                                        if btn._origY == nil then btn._origY = btn._y end
-                                        if btn._origKnobY == nil then btn._origKnobY = btn._knobY end
-                                        if btn._origY    then btn._y    = btn._origY    + scrollDelta end
-                                        if btn._origKnobY then btn._knobY = btn._origKnobY + scrollDelta end
+                                        if btn._origDY     then btn._y    = baseAbsY + btn._origDY     end
+                                        if btn._origKnobDY then btn._knobY = baseAbsY + btn._origKnobDY end
                                     end
 
                                     local cs2 = wElem._channelSliders or {}
                                     for _, s2 in pairs(cs2) do
-                                        if s2._origKnobY == nil then s2._origKnobY = s2._knobY end
-                                        if s2._origRowY  == nil then s2._origRowY  = s2._rowY  end
-                                        if s2._origKnobY then s2._knobY = s2._origKnobY + scrollDelta end
-                                        if s2._origRowY  then s2._rowY  = s2._origRowY  + scrollDelta end
+                                        if s2._origKnobDY then s2._knobY = baseAbsY + s2._origKnobDY end
+                                        if s2._origRowDY  then s2._rowY  = baseAbsY + s2._origRowDY  end
                                     end
                                 end
                                 local pSet = widget._panelObjSet or {}
