@@ -3,7 +3,7 @@
 -- Designed for Matcha external executor overlay rendering
 -- No tweens, no heavy animations. Pure Drawing API.
 
-print("Testing To-do 2-1.1.1")
+print("Testing To-do 2-1.1.2")
 local MatchaUI = {}
 MatchaUI.__index = MatchaUI
 
@@ -2051,26 +2051,46 @@ function MatchaUI.AddConfigPreset(win, opts)
         #presetList > 0 and presetList or {"(none)"},
         _cfg.ThemePreset or (presetList[1] or "(none)"),
         function(sel)
+            -- Clear all individual ThemeKey overrides so the preset applies to ALL keys cleanly.
+            -- If the user wants per-slot edits after loading a preset, they can use the ThemeKey
+            -- picker again — those edits will be saved fresh.
+            _cfg.ThemeColors = {}
+
             if builtinPresets[sel] then
                 applyBuiltinPreset(sel)
-                -- Re-apply saved accent + individual theme key overrides over the preset
-                MatchaUI.SetAccentColor(hex3c(_cfg.AccentHex))
-                local tc = _cfg.ThemeColors or {}
-                for _, k in ipairs(THEME_SLOT_KEYS) do
-                    if tc[k] then MatchaUI.SetThemeColor(k, hex3c(tc[k])) end
-                end
+                -- Sync accent from preset into _cfg
+                local p = builtinPresets[sel]
+                if p.accent then _cfg.AccentHex = c3hex(p.accent) end
             else
                 local data = loadCustomTheme(sel)
                 if data then
                     applyCustomData(data)
-                    MatchaUI.SetAccentColor(hex3c(_cfg.AccentHex))
+                    if data.accentHex then _cfg.AccentHex = data.accentHex end
                     MatchaUI.Notify("Theme", sel.." loaded", 3)
                 else
                     MatchaUI.Notify("Theme", sel.." not found", 3)
                 end
             end
+
             _cfg.ThemePreset = sel
             saveConfig()
+
+            -- Sync widget previews to reflect the newly loaded preset
+            if cpAccent then
+                local newAccent = hex3c(_cfg.AccentHex)
+                cpAccent.Color = newAccent
+                if cpAccent._preview   then cpAccent._preview.Color   = newAccent end
+                if cpAccent._prevPatch then cpAccent._prevPatch.Color  = newAccent end
+            end
+            if cpThemeKey and ddThemeKey then
+                local selKey = ddThemeKey.Selected or THEME_SLOT_KEYS[1]
+                local liveColor = Theme and Theme[selKey]
+                if liveColor then
+                    cpThemeKey.Color = liveColor
+                    if cpThemeKey._preview   then cpThemeKey._preview.Color   = liveColor end
+                    if cpThemeKey._prevPatch then cpThemeKey._prevPatch.Color  = liveColor end
+                end
+            end
         end)
     win.AddTooltip(ddPreset, "Built-in presets + any saved custom themes. Auto-saved.")
 
