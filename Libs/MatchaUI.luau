@@ -3,7 +3,7 @@
 -- Designed for Matcha external executor overlay rendering
 -- No tweens, no heavy animations. Pure Drawing API.
 
-print("Testing to-do 3-1.0.0")
+print("Testing to-do 3-1.0.1")
 local MatchaUI = {}
 MatchaUI.__index = MatchaUI
 
@@ -368,6 +368,10 @@ function MatchaUI.CreateWindow(opts)
     -- ─────────────────────────────
     local function setWinVisible(state)
         win.Visible = state
+        -- Showing the window always presents it fully expanded (all _draws visible).
+        -- Reset Minimized so the internal state matches what the user sees.
+        -- The toggle thread will call win.Minimize() afterward if needed.
+        if state then win.Minimized = false end
         for _, d in ipairs(win._draws) do
             pcall(function() d.Visible = state end)
         end
@@ -2487,7 +2491,7 @@ function MatchaUI.AddConfigPreset(win, opts)
                         else
                             -- About to show: restore fully first, then re-minimize if needed
                             win.SetVisible(true)
-                            if _wasMinimized and not win.Minimized then
+                            if _wasMinimized then
                                 -- win.SetVisible(true) always expands the window;
                                 -- call minimize() to put it back to minimized state.
                                 win.Minimize()
