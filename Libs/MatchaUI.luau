@@ -3,7 +3,7 @@
 -- Designed for Matcha external executor overlay rendering
 -- No tweens, no heavy animations. Pure Drawing API.
 
-print("Testing to-do 3-1.0.1")
+print("Testing to-do 3-1.0.0")
 local MatchaUI = {}
 MatchaUI.__index = MatchaUI
 
@@ -514,7 +514,7 @@ function MatchaUI.CreateWindow(opts)
                 end
             end
         end
-        minTxt.Text = win.Minimized and "+" or "-"
+        minTxt.Text = win.Minimized and "-" or "-"
     end
 
     -- ─────────────────────────────
